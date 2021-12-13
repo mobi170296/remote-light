@@ -5,7 +5,7 @@
 #include <spi_flash.h>
 #include <mem.h>
 
-#define PAGE_LENGTH 29304
+#define PAGE_LENGTH 29881
 #define HTTP_HEADER "HTTP/1.1 200 OK\r\nServer: MG\r\nConnection: close\r\n\r\n%s"
 #define HTTP_HEADER_HOME "HTTP/1.1 200 OK\r\nServer: MG\r\nConnection: close\r\n\r\n"
 #define FLASH_START 0x200000
@@ -29,6 +29,9 @@ struct dhcps_lease dhcps_ip_range;
 struct espconn tcp_connection;
 esp_tcp tcp_esp;
 
+os_timer_t polling_button_timer;
+int last_btn_status;
+
 void memmovetail(void *head, unsigned int head_length, unsigned int total_length)
 {
     char *total_tail = (char*)head + total_length - 1;
@@ -42,12 +45,12 @@ void memmovetail(void *head, unsigned int head_length, unsigned int total_length
 
 void relay_off()
 {
-    GPIO_OUTPUT_SET(RELAY_PIN, 1);
+    GPIO_OUTPUT_SET(RELAY_PIN, 0);
 }
 
 void relay_on()
 {
-    GPIO_OUTPUT_SET(RELAY_PIN, 0);
+    GPIO_OUTPUT_SET(RELAY_PIN, 1);
 }
 
 void relay_toggle()
@@ -57,16 +60,15 @@ void relay_toggle()
 
 bool relay_state()
 {
-    return !GPIO_INPUT_GET(RELAY_PIN);
+    return GPIO_INPUT_GET(RELAY_PIN);
 }
 
-void toggle_touch_button_handler(void *arg)
+void polling_button_callback(void *arg)
 {
-    uint16_t gpio_status = GPIO_REG_READ(GPIO_STATUS_ADDRESS);
-    GPIO_REG_WRITE(GPIO_STATUS_W1TC_ADDRESS, gpio_status);
-
-    if (gpio_status & BIT(BUTTON_PIN))
+    int btn_status = GPIO_INPUT_GET(BUTTON_PIN);
+    if (btn_status != last_btn_status)
     {
+        last_btn_status = btn_status;
         GPIO_OUTPUT_SET(RELAY_PIN, !GPIO_INPUT_GET(RELAY_PIN));
     }
 }
@@ -81,12 +83,13 @@ void setup_io()
 
     GPIO_DIS_OUTPUT(BUTTON_PIN);
     PIN_PULLUP_DIS(PINNAME_GPIO4);
+    last_btn_status = GPIO_INPUT_GET(BUTTON_PIN);
 
     relay_off();
 
-    ETS_GPIO_INTR_ATTACH(toggle_touch_button_handler, NULL);
-    gpio_pin_intr_state_set(BUTTON_PIN, GPIO_PIN_INTR_ANYEDGE);
-    ETS_GPIO_INTR_ENABLE();
+    os_memset(&polling_button_timer, 0, sizeof polling_button_timer);
+    os_timer_setfn(&polling_button_timer, polling_button_callback);
+    os_timer_arm(&polling_button_timer, 100, 1);
 }
 
 void setup_wifi()
@@ -122,12 +125,12 @@ void setup_wifi()
 void tcp_disconnect_handler(void *arg)
 {
     // TODO
-    //os_printf("DISCONNECT CALLBACK\n");
+    // os_printf("DISCONNECT CALLBACK\n");
 }
 
 void tcp_receive_handler(void *arg, char *data, unsigned short length)
 {
-    //os_printf("RECEIVE CALLBACK\n");
+    // os_printf("RECEIVE CALLBACK\n");
     struct espconn* connection = (struct espconn*)arg;
     char *method, *url, *version;
     char *ndata = (char*)os_malloc(length + 1);
@@ -179,7 +182,6 @@ void tcp_receive_handler(void *arg, char *data, unsigned short length)
                     char *body = (char*)os_malloc(sizeof(HTTP_HEADER_HOME) - 1 + FLASH_SIZE);
                     if (body)
                     {
-                        //os_printf("HEAP on HOME: %u\n", system_get_free_heap_size());
                         spi_flash_read(FLASH_START, (uint32_t *)(body), FLASH_SIZE);
                         memmovetail(body, FLASH_SIZE, sizeof(HTTP_HEADER_HOME) - 1 + FLASH_SIZE);
                         os_memcpy(body, HTTP_HEADER_HOME, sizeof(HTTP_HEADER_HOME) - 1);
@@ -203,19 +205,18 @@ void tcp_receive_handler(void *arg, char *data, unsigned short length)
         // Terminated line missing
     }
 
-    //os_printf("HEAP: %u\n", system_get_free_heap_size());
     os_free(ndata);
 }
 
 void tcp_sent_handler(void *arg)
 {
-    //os_printf("SENT CALLBACK\n");
+    // os_printf("SENT CALLBACK\n");
     espconn_disconnect((struct espconn*)arg);
 }
 
 void tcp_connect_handler(void *arg)
 {
-    //os_printf("CONNECT CALLBACK\n");
+    // os_printf("CONNECT CALLBACK\n");
     struct espconn *connection = (struct espconn*)arg;
     espconn_regist_disconcb(connection, tcp_disconnect_handler);
     espconn_regist_recvcb(connection, tcp_receive_handler);

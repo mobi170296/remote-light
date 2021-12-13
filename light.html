@@ -16,10 +16,10 @@
                 left: 50%;
                 margin-top: -100px;
                 margin-left: -100px;
-                transition: all 500ms;
+                transition: all 200ms;
             }
             button.light-btn-on {
-                transform: scale(1.5);
+                transform: scale(2);
                 background: #ffffff;
                 box-shadow: 0px 0px 30px 0px rgba(0, 0, 0, 0.3);
             }
@@ -41,6 +41,7 @@
             var btn_light = document.querySelector('#light-btn');
             var img_light_on = document.querySelector('#light-on');
             var img_light_off = document.querySelector('#light-off');
+            var timer_id = 0;
             function GetRelayStatus()
             {
                 var xhr = new XMLHttpRequest();
@@ -75,15 +76,33 @@
                     document.body.style.background = '#000000';
                 }
             }
-            function Initialize()
+            function SetupTimer()
             {
-                RefreshButton();
-                setInterval(function(e)
+                return setInterval(function(e)
                 {
                     RefreshButton();
-                }, 500);
+                }, 200);
             }
-            Initialize();
+            (function Initialize()
+            {
+                RefreshButton();
+                window.onfocus = function(e)
+                {
+                    if (!timer_id)
+                    {
+                        timer_id = SetupTimer();
+                    }
+                };
+                window.onblur = function(e)
+                {
+                    clearInterval(timer_id);
+                    timer_id = 0;
+                };
+                if (!timer_id)
+                {
+                    timer_id = SetupTimer();
+                }
+            })();
         </script>
     </body>
 </html>
