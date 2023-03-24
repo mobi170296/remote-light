@@ -4,9 +4,10 @@
 #include <espconn.h>
 #include <spi_flash.h>
 #include <mem.h>
+#include <sntp.h>
+#include <time.h>
 
-#define PAGE_LENGTH 29881
-#define HTTP_HEADER "HTTP/1.1 200 OK\r\nServer: MG\r\nConnection: close\r\n\r\n%s"
+#define HTTP_HEADER "HTTP/1.1 200 OK\r\nServer: MG\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n%s"
 #define HTTP_HEADER_HOME "HTTP/1.1 200 OK\r\nServer: MG\r\nConnection: close\r\n\r\n"
 #define FLASH_START 0x200000
 #define FLASH_SIZE ((PAGE_LENGTH/4 + 1)*4)
@@ -22,15 +23,29 @@
 #define SSID "Light Controller"
 #define PASSWORD "cucdangdexuong"
 
+#define CLIENT_SSID "Here"
+#define CLIENT_PASSWORD "Tvl@0795759696"
+
+#define SET_PIN_STATE(pin, state) (GPIO_OUTPUT_SET(pin, state))
+#define GET_PIN_STATE(pin) (!GPIO_INPUT_GET(pin))
+
+#define RELAY1_PIN 5
+#define RELAY2_PIN 4
+#define RELAY_OFF 1
+#define RELAY_ON 0
+
 struct softap_config wifi_config;
+struct station_config client_config;
 struct ip_info wifi_ip;
 struct dhcps_lease dhcps_ip_range;
+
+os_timer_t sntp_timer;
 
 struct espconn tcp_connection;
 esp_tcp tcp_esp;
 
-os_timer_t polling_button_timer;
-int last_btn_status;
+// os_timer_t polling_button_timer;
+// int last_btn_status;
 
 void memmovetail(void *head, unsigned int head_length, unsigned int total_length)
 {
@@ -43,35 +58,35 @@ void memmovetail(void *head, unsigned int head_length, unsigned int total_length
     }
 }
 
-void relay_off()
-{
-    GPIO_OUTPUT_SET(RELAY_PIN, 0);
-}
+// void relay_off()
+// {
+//     GPIO_OUTPUT_SET(RELAY_PIN, 0);
+// }
 
-void relay_on()
-{
-    GPIO_OUTPUT_SET(RELAY_PIN, 1);
-}
+// void relay_on()
+// {
+//     GPIO_OUTPUT_SET(RELAY_PIN, 1);
+// }
 
-void relay_toggle()
-{
-    GPIO_OUTPUT_SET(RELAY_PIN, !GPIO_INPUT_GET(RELAY_PIN));
-}
+// void relay_toggle()
+// {
+//     GPIO_OUTPUT_SET(RELAY_PIN, !GPIO_INPUT_GET(RELAY_PIN));
+// }
 
-bool relay_state()
-{
-    return GPIO_INPUT_GET(RELAY_PIN);
-}
+// bool relay_state()
+// {
+//     return GPIO_INPUT_GET(RELAY_PIN);
+// }
 
-void polling_button_callback(void *arg)
-{
-    int btn_status = GPIO_INPUT_GET(BUTTON_PIN);
-    if (btn_status != last_btn_status)
-    {
-        last_btn_status = btn_status;
-        GPIO_OUTPUT_SET(RELAY_PIN, !GPIO_INPUT_GET(RELAY_PIN));
-    }
-}
+// void polling_button_callback(void *arg)
+// {
+//     int btn_status = GPIO_INPUT_GET(BUTTON_PIN);
+//     if (btn_status != last_btn_status)
+//     {
+//         last_btn_status = btn_status;
+//         GPIO_OUTPUT_SET(RELAY_PIN, !GPIO_INPUT_GET(RELAY_PIN));
+//     }
+// }
 
 void setup_io()
 {
@@ -81,45 +96,64 @@ void setup_io()
     PIN_FUNC_SELECT(PINNAME_GPIO4, FUNC_GPIO4);
     PIN_FUNC_SELECT(PINNAME_GPIO5, FUNC_GPIO5);
 
-    GPIO_DIS_OUTPUT(BUTTON_PIN);
-    PIN_PULLUP_DIS(PINNAME_GPIO4);
-    last_btn_status = GPIO_INPUT_GET(BUTTON_PIN);
+    SET_PIN_STATE(RELAY1_PIN, RELAY_OFF);
+    SET_PIN_STATE(RELAY2_PIN, RELAY_OFF);
+    // GPIO_DIS_OUTPUT(BUTTON_PIN);
+    // PIN_PULLUP_DIS(PINNAME_GPIO4);
+    // last_btn_status = GPIO_INPUT_GET(BUTTON_PIN);
 
-    relay_off();
+    // relay_off();
 
-    os_memset(&polling_button_timer, 0, sizeof polling_button_timer);
-    os_timer_setfn(&polling_button_timer, polling_button_callback);
-    os_timer_arm(&polling_button_timer, 100, 1);
+    // os_memset(&polling_button_timer, 0, sizeof polling_button_timer);
+    // os_timer_setfn(&polling_button_timer, polling_button_callback, NULL);
+    // os_timer_arm(&polling_button_timer, 100, 1);
 }
 
 void setup_wifi()
 {
-    wifi_set_opmode_current(SOFTAP_MODE);
+    wifi_station_set_hostname("Light Node");
 
-    os_memset(&wifi_config, 0, sizeof wifi_config);
-    os_strcpy(wifi_config.ssid, SSID);
-    os_strcpy(wifi_config.password, PASSWORD);
-    wifi_config.ssid_len = os_strlen(SSID);
-    wifi_config.ssid_hidden = 0;
-    wifi_config.channel = 10;
-    wifi_config.beacon_interval = 100;
-    wifi_config.max_connection = 4;
-    wifi_config.authmode = AUTH_WPA_WPA2_PSK;
-    wifi_softap_set_config_current(&wifi_config);
+    os_strcpy(client_config.ssid, CLIENT_SSID);
+    os_strcpy(client_config.password, CLIENT_PASSWORD);
 
-    wifi_softap_dhcps_stop();
-    os_memset(&wifi_ip, 0, sizeof wifi_ip);
-    IP4_ADDR(&wifi_ip.ip, 10, 10, 10, 10);
-    IP4_ADDR(&wifi_ip.netmask, 255, 255, 255, 0);
-    IP4_ADDR(&wifi_ip.gw, 10, 10, 10, 10);
-    wifi_set_ip_info(SOFTAP_IF, &wifi_ip);
+    wifi_station_set_config_current(&client_config);
 
-    os_memset(&dhcps_ip_range, 0, sizeof dhcps_ip_range);
-    dhcps_ip_range.enable = TRUE;
-    IP4_ADDR(&dhcps_ip_range.start_ip, 10, 10, 10, 100);
-    IP4_ADDR(&dhcps_ip_range.end_ip, 10, 10, 10, 200);
-    wifi_softap_set_dhcps_lease(&dhcps_ip_range);
-    wifi_softap_dhcps_start();
+    wifi_station_connect();
+
+    struct ip_info client_address;
+    IP4_ADDR(&client_address.ip, 192, 168, 1, 200);
+    IP4_ADDR(&client_address.gw, 192, 168, 1, 1);
+    IP4_ADDR(&client_address.netmask, 255, 255, 255, 0);
+
+    wifi_set_ip_info(STATION_IF, &client_address);
+
+    sntp_setservername(0, "time.nist.gov");
+    sntp_init();
+    
+    // os_memset(&wifi_config, 0, sizeof wifi_config);
+    // os_strcpy(wifi_config.ssid, SSID);
+    // os_strcpy(wifi_config.password, PASSWORD);
+    // wifi_config.ssid_len = os_strlen(SSID);
+    // wifi_config.ssid_hidden = 0;
+    // wifi_config.channel = 10;
+    // wifi_config.beacon_interval = 100;
+    // wifi_config.max_connection = 4;
+    // wifi_config.authmode = AUTH_WPA_WPA2_PSK;
+    // wifi_softap_set_config_current(&wifi_config);
+
+    // wifi_softap_dhcps_stop();
+    // os_memset(&wifi_ip, 0, sizeof wifi_ip);
+    // IP4_ADDR(&wifi_ip.ip, 10, 10, 10, 10);
+    // IP4_ADDR(&wifi_ip.netmask, 255, 255, 255, 0);
+    // IP4_ADDR(&wifi_ip.gw, 10, 10, 10, 10);
+    // wifi_set_ip_info(SOFTAP_IF, &wifi_ip);
+
+    // os_memset(&dhcps_ip_range, 0, sizeof dhcps_ip_range);
+    // dhcps_ip_range.enable = TRUE;
+    // IP4_ADDR(&dhcps_ip_range.start_ip, 10, 10, 10, 100);
+    // IP4_ADDR(&dhcps_ip_range.end_ip, 10, 10, 10, 200);
+    // wifi_softap_set_dhcps_lease(&dhcps_ip_range);
+    // wifi_softap_dhcps_start();
 }
 
 void tcp_disconnect_handler(void *arg)
@@ -156,24 +190,43 @@ void tcp_receive_handler(void *arg, char *data, unsigned short length)
                 //os_printf("URL: %s\n", url);
                 if (os_strstr(url, "getrelaystatus"))
                 {
+                    char *json = (char*)os_malloc(100);
+                    char *header = (char*)os_malloc(sizeof(HTTP_HEADER) + 100);
+                    os_sprintf(json, "{\"1\": %d, \"2\": %d}", GET_PIN_STATE(RELAY1_PIN), GET_PIN_STATE(RELAY2_PIN));
+                    os_sprintf(header, HTTP_HEADER, json);
+                    espconn_send(connection, header, strlen(header));
+                    os_free(header);
+                    os_free(json);
+                }
+                else if (os_strstr(url, "onrelay?pin=1"))
+                {
                     char *header = (char*)os_malloc(sizeof(HTTP_HEADER));
-                    os_sprintf(header, HTTP_HEADER, relay_state() ? "1" : "0");
+                    SET_PIN_STATE(RELAY1_PIN, RELAY_ON);
+                    os_sprintf(header, HTTP_HEADER, "1");
                     espconn_send(connection, header, strlen(header));
                     os_free(header);
                 }
-                else if (os_strstr(url, "relayon"))
+                else if (os_strstr(url, "onrelay?pin=2"))
                 {
                     char *header = (char*)os_malloc(sizeof(HTTP_HEADER));
-                    relay_on();
-                    os_sprintf(header, HTTP_HEADER, relay_state() ? "1" : "0");
+                    SET_PIN_STATE(RELAY2_PIN, RELAY_ON);
+                    os_sprintf(header, HTTP_HEADER, "1");
                     espconn_send(connection, header, strlen(header));
                     os_free(header);
                 }
-                else if (os_strstr(url, "relayoff"))
+                else if (os_strstr(url, "offrelay?pin=1"))
                 {
                     char *header = (char*)os_malloc(sizeof(HTTP_HEADER));
-                    relay_off();
-                    os_sprintf(header, HTTP_HEADER, relay_state() ? "1" : "0");
+                    SET_PIN_STATE(RELAY1_PIN, RELAY_OFF);
+                    os_sprintf(header, HTTP_HEADER, "1");
+                    espconn_send(connection, header, strlen(header));
+                    os_free(header);
+                }
+                else if (os_strstr(url, "offrelay?pin=2"))
+                {
+                    char *header = (char*)os_malloc(sizeof(HTTP_HEADER));
+                    SET_PIN_STATE(RELAY2_PIN, RELAY_OFF);
+                    os_sprintf(header, HTTP_HEADER, "1");
                     espconn_send(connection, header, strlen(header));
                     os_free(header);
                 }
@@ -237,15 +290,38 @@ void setup_tcp_server()
     espconn_accept(&tcp_connection);
 }
 
+void sync_sntp_callback(void *a)
+{
+    unsigned int timestamp = sntp_get_current_timestamp();
+    if (timestamp)
+    {
+        timestamp -= 3600;
+        struct tm *datetime = localtime((time_t*)&timestamp);
+        if (datetime->tm_hour == 18 && datetime->tm_min >= 0 && datetime->tm_min <= 1)
+        {
+            SET_PIN_STATE(RELAY1_PIN, RELAY_ON);
+            SET_PIN_STATE(RELAY2_PIN, RELAY_ON);
+        }
+    }
+}
+
 void app_init()
 {
     uart_div_modify(0, UART_CLK_FREQ / 115200);
     setup_io();
     setup_wifi();
     setup_tcp_server();
+    os_timer_setfn(&sntp_timer, sync_sntp_callback, NULL);
+    os_timer_arm(&sntp_timer, 5000, true);
 }
 
 void user_init(void)
 {
+    // Update new MAC address
+    unsigned char mac[] = {0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa};
+    wifi_set_opmode_current(STATION_MODE);
+    wifi_set_macaddr(STATION_IF, mac);
+    wifi_station_set_reconnect_policy(true);
+    wifi_station_dhcpc_stop();
     system_init_done_cb(app_init);
 }

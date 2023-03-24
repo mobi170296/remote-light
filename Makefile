@@ -14,6 +14,8 @@ ESPTOOL 	:= $(TOOL_DIR)/esptool/esptool.py
 DEVICE_PORT	:= /dev/ttyUSB0
 DEVICE_BAUD := 921600
 
+HTML_SIZE 	:= $(shell stat -c "%s" light.html)
+
 all: main.bin
 
 main.bin: main.out
@@ -26,7 +28,7 @@ main.a: main.o rf_init.o
 	$(AR) cru main.a main.o rf_init.o
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -DPAGE_LENGTH=$(HTML_SIZE) -c $< -o $@
 
 clean:
 	rm -rf *.o *.bin *.a *.out
